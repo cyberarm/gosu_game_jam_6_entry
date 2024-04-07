@@ -215,8 +215,8 @@ class GGJ6E
         y = window.height - TILE_SIZE
         tile_count.times do |i|
           @tiles[:dirt].draw(x, y, 0)
-          @tiles[:water_a].draw(x, y + 4, 0) if i.even?
-          @tiles[:water_b].draw(x, y + 4, 0) if i.odd?
+          @tiles[:water_a].draw(x, y + 4, 0) if i % 2 == 0
+          @tiles[:water_b].draw(x, y + 4, 0) if i % 2 == 1
           x += TILE_SIZE
         end
 
