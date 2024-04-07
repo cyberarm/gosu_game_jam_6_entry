@@ -12,6 +12,7 @@ class GGJ6E
           flow(width: 1.0, fill: true) do
             flow(width: 0.25, max_width: 350, height: 1.0) do
               button "PLAY", width: 1.0 do
+                pop_state
                 push_state(GGJ6E::States::Game)
               end
 
@@ -28,6 +29,19 @@ class GGJ6E
 
           caption "A game by cyberarm", width: 1.0, text_align: :center
           caption "For the Gosu Game Jam 6: <b>Run and Gun</b>", width: 1.0, text_align: :center
+        end
+      end
+
+      def button_down(id)
+        super
+
+        case id
+        when Gosu::KB_ENTER, Gosu::KB_RETURN, Gosu::KB_SPACE
+          pop_state
+          push_state(GGJ6E::States::Game)
+        when Gosu::GP_BUTTON_0..Gosu::GP_BUTTON_15
+          pop_state
+          push_state(GGJ6E::States::Game)
         end
       end
     end

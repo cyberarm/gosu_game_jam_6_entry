@@ -12,8 +12,19 @@ class GGJ6E
         stack(width: 1.0, height: 1.0, z: -1) do
           background 0xff_22aeff..0xff_1ea7e1
 
-          @distance_label = title "DISTANCE: 0 meters", margin: 32
+          @progress_bar = progress fraction: 0.0, width: 1.0, height: 2, margin_top: 16, margin_left: 32, margin_right: 32
+          @distance_label = title "DISTANCE: 0 meters", margin_left: 32, margin_top: 16
         end
+
+        @music = get_song(format("%s/music/bryliechristopheroxley-epicycles-8bitsunrise.ogg", MEDIA_PATH))
+        @music.volume = 0.25
+        @music.play
+
+        @jump_sfx = get_sample(format("%s/sfx/footstep_carpet_000.ogg", MEDIA_PATH))
+        @land_sfx = get_sample(format("%s/sfx/footstep_carpet_004.ogg", MEDIA_PATH))
+        @laser_sfx = get_sample(format("%s/sfx/impactGlass_heavy_001.ogg", MEDIA_PATH))
+        @impact_sfx = get_sample(format("%s/sfx/impactMetal_medium_000.ogg", MEDIA_PATH))
+        @kill_sfx = get_sample(format("%s/sfx/impactPlate_heavy_002.ogg", MEDIA_PATH))
 
         @tiles = {
           grass: get_image(format("%s/Base pack/Tiles/grassMid.png", MEDIA_PATH)),
@@ -35,7 +46,9 @@ class GGJ6E
         @cactus_box = CyberarmEngine::BoundingBox.new(27, 16, 43, 70)
         @blocker_box = CyberarmEngine::BoundingBox.new(4, 4, 48, 48)
 
-        @player = get_image(format("%s/Base pack/Player/p1_stand.png", MEDIA_PATH))
+        @alien = get_image(format("%s/Base pack/Player/p1_stand.png", MEDIA_PATH))
+        @alien_box = CyberarmEngine::BoundingBox.new(21, 18, 43, 60)
+
         @gun = get_image(format("%s/Request pack/Tiles/raygunBig.png", MEDIA_PATH))
         @bullet = get_image(format("%s/Request pack/Tiles/laserPurple.png", MEDIA_PATH))
         @bullet_box = CyberarmEngine::BoundingBox.new(22, 31, 50, 37)
@@ -44,17 +57,32 @@ class GGJ6E
         @velocity_y = 0.0
         @speed = 210
         @look_angle = 0.0
-        @bullet_speed = @speed
+        @bullet_speed = @speed * 1.5
+        @bullet_interval = 750 # ms
         @bullet_damage = 100.0 / 3.0
         @last_bullet_spawned_at = 0
+        @jumping = false
 
         @x = 128
         @base_y = window.height - PLAYER_HEIGHT * 3.1
         @y = window.height - PLAYER_HEIGHT * 3.1
 
+        @debug_draw = false
+        @game_paused = false
+        @level_length = 768 # (1280 / 70) units
+
         @bullets = []
         @sparks = []
         @enemies = []
+
+        @player = GameObject.new(
+            @alien,
+            CyberarmEngine::Vector.new(@x, @y),
+            CyberarmEngine::Vector.new,
+            CyberarmEngine::Vector.new(1, 1, 0),
+            100.0,
+            @alien_box
+          )
 
         @random_table = [
           0.7131145686298177, 0.9964349573410236, 0.6922118704794343, 0.46555536957425825, 0.9923425937976738,
@@ -110,12 +138,22 @@ class GGJ6E
           0.20804270844298012, 0.22537352752908757, 0.465578855197352, 0.8538615061195138, 0.5713405698844113,
           0.9324597021602132
         ].freeze
-        @random_table_index = 72
+        @random_table_index = 36
 
-        1000.times do |i|
+        spawned = false
+        (@level_length - 16).times do |i|
+          i += 16
           r = Math.sqrt(prand)
 
           next unless r > 0.8
+
+          if spawned
+            spawned = false
+
+            next
+          end
+
+          spawned = true
 
           is_cactus = r > 0.9
 
@@ -133,9 +171,11 @@ class GGJ6E
       def draw
         super
 
-        @player.draw(@x, @y, 0)
-        @gun.draw_rot(@x + TILE_SIZE / 2 + 12, @y + (TILE_SIZE * 0.75), 0, @look_angle, 0.0, 0.5)
-        @sign_right.draw(256 - @offset_x, window.height - TILE_SIZE * 4, 0)
+        @sign_right.draw(512 - @offset_x, window.height - TILE_SIZE * 4, 0)
+
+        @player.image.draw(@player.position.x, @player.position.y, 0)
+        debug_draw_box(@alien_box.normalize_with_offset(@player), Gosu::Color::GREEN)
+        @gun.draw_rot(@x + TILE_SIZE / 2 + 12, @y + (TILE_SIZE * 0.75), 1, @look_angle, 0.0, 0.5)
 
 
         # How many tiles to draw on screen, plus overdraw to hide pop-in
@@ -154,7 +194,7 @@ class GGJ6E
           e.image.draw(e.position.x, e.position.y, 0)
           box = e.box.normalize_with_offset(e)
 
-          debug_draw_box(box, Gosu::Color::YELLOW)
+          debug_draw_box(box, 0xff_ff8800)
         end
 
         x = -@offset_x.round % TILE_SIZE - TILE_SIZE
@@ -179,31 +219,61 @@ class GGJ6E
           @tiles[:water_b].draw(x, y + 4, 0) if i.odd?
           x += TILE_SIZE
         end
+
+        # Draw transparent overlay if player has died
+        fill(0xaa_000000, 3) if @player.health <= 0.0
+
+        # Draw transparent overlay if player has won
+        fill(0x88_008000, 3) if @progress_bar.value >= 1.0
       end
 
       def update
         super
 
-        # @offset_x += @speed * window.dt if Gosu.button_down?(Gosu::GP_RIGHT) || Gosu.button_down?(Gosu::KB_RIGHT) || Gosu.button_down?(Gosu::KB_D)
-        # @offset_x -= @speed * window.dt if Gosu.button_down?(Gosu::GP_LEFT) || Gosu.button_down?(Gosu::KB_LEFT) || Gosu.button_down?(Gosu::KB_A)
+        dt = window.dt # * (1 + @progress_bar.value * 2.5) speed multiplier...?
 
-        delta_x = @speed * window.dt
+        if @player.health <= 0.0 || @offset_x / TILE_SIZE.to_f >= @level_length.to_f
+          @distance_label.value = format("DISTANCE: <c=0ff>%d meters</c>\nPress <c=ff0>F5</c> or <c=ff0>START</c> to play again.", @offset_x / TILE_SIZE.to_f)
+          @progress_bar.value = (@offset_x / TILE_SIZE.to_f) / @level_length.to_f
+
+          @music&.stop
+
+          return
+        end
+
+        return if @game_paused
+
+        # @offset_x += @speed * dt if Gosu.button_down?(Gosu::GP_RIGHT) || Gosu.button_down?(Gosu::KB_RIGHT) || Gosu.button_down?(Gosu::KB_D)
+        # @offset_x -= @speed * dt if Gosu.button_down?(Gosu::GP_LEFT) || Gosu.button_down?(Gosu::KB_LEFT) || Gosu.button_down?(Gosu::KB_A)
+
+        delta_x = @speed * dt
         @offset_x += delta_x
 
-        @velocity_y -= GRAVITY * 200 * window.dt
+        @velocity_y -= GRAVITY * 200 * dt
 
-        @y -= @velocity_y * window.dt
+        @y -= @velocity_y * dt
 
         @velocity_y = 0.0 if @y >= @base_y
-        @y = @base_y if @y > @base_y
+        if @y > @base_y
+          @y = @base_y
+          @land_sfx.play(0.35) if @jumping
+          @jumping = false
+        end
 
-        @velocity_y += 768 if @y == @base_y && (Gosu.button_down?(Gosu::GP_DPAD_UP) || Gosu.axis(Gosu::GP_LEFT_STICK_Y_AXIS) > 0.25 || Gosu.button_down?(Gosu::KB_UP) || Gosu.button_down?(Gosu::KB_W))
+        @player.position.y = @y
+
+        if @y == @base_y && (Gosu.button_down?(Gosu::GP_DPAD_UP) || Gosu.axis(Gosu::GP_LEFT_STICK_Y_AXIS) > 0.25 || Gosu.button_down?(Gosu::KB_UP) || Gosu.button_down?(Gosu::KB_W))
+          @velocity_y += 768
+          @jumping = true
+          @jump_sfx.play(0.5)
+        end
 
         @distance_label.value = format("DISTANCE: %d meters", @offset_x / TILE_SIZE.to_f)
+        @progress_bar.value = (@offset_x / TILE_SIZE.to_f) / @level_length.to_f
 
         @look_angle = Gosu.angle(@x + TILE_SIZE / 2 + 12, @y + (TILE_SIZE * 0.75), window.mouse_x, window.mouse_y) - 90.0
 
-        spawn_bullet # if (Gosu.axis(Gosu::GP_RIGHT_TRIGGER_AXIS) > 0.25 || Gosu.button_down?(Gosu::GP_BUTTON_0) || Gosu.button_down?(Gosu::KB_SPACE) || Gosu.button_down?(Gosu::KB_X) || Gosu.button_down?(Gosu::KB_C))
+        spawn_bullet if (Gosu.axis(Gosu::GP_RIGHT_TRIGGER_AXIS) > 0.25 || Gosu.button_down?(Gosu::GP_BUTTON_0) || Gosu.button_down?(Gosu::MS_LEFT) || Gosu.button_down?(Gosu::KB_SPACE) || Gosu.button_down?(Gosu::KB_X) || Gosu.button_down?(Gosu::KB_C))
 
         @enemies.each do |e|
           e.position.x -= delta_x
@@ -211,13 +281,23 @@ class GGJ6E
         end
 
         @bullets.each do |b|
-          b.position.x += delta_x + @bullet_speed * window.dt
+          b.position += b.velocity * (@bullet_speed * dt)
         end
 
         # bullet collision
         ## select valid enemies
         enemies = @enemies.select do |e|
           e.position.x <= window.width
+        end
+
+        # Check if player has collided with enemies
+        pbox = @player.box.normalize_with_offset(@player)
+        enemies.each do |e|
+          # normalize box so it is projected to "world space"
+          ebox = e.box.normalize_with_offset(e)
+
+          # Kill player if it touches an enemy
+          @player.health = 0.0 if pbox.intersect?(ebox)
         end
 
         ## find and handle any collisions
@@ -231,10 +311,35 @@ class GGJ6E
 
             if bbox.intersect?(ebox)
               @bullets.delete(b)
+              @impact_sfx.play(0.25)
 
               e.health -= @bullet_damage
-              @enemies.delete(e) if e.health <= 0.0
+              if e.health <= 0.0
+                @enemies.delete(e)
+                @kill_sfx.play(0.5)
+              end
             end
+          end
+        end
+      end
+
+      def button_down(id)
+        super
+
+        case id
+        when Gosu::KB_TAB
+          @debug_draw = !@debug_draw
+        when Gosu::KB_F5, Gosu::GP_BUTTON_6
+          if @player.health <= 0.0
+            pop_state
+            push_state(Game)
+          end
+        when Gosu::KB_P, Gosu::GP_BUTTON_4
+          if @player.health > 0.0
+            @music.play if @game_paused
+            @music.pause unless @game_paused
+
+            @game_paused = !@game_paused
           end
         end
       end
@@ -247,7 +352,7 @@ class GGJ6E
       end
 
       def spawn_bullet
-        return unless Gosu.milliseconds - @last_bullet_spawned_at >= 250.0
+        return unless Gosu.milliseconds - @last_bullet_spawned_at >= @bullet_interval
         @last_bullet_spawned_at = Gosu.milliseconds
 
         @bullets << GameObject.new(
@@ -258,9 +363,13 @@ class GGJ6E
           100.0,
           @bullet_box
         )
+
+        @laser_sfx.play(0.25)
       end
 
       def debug_draw_box(box, color = Gosu::Color::RED)
+        return unless @debug_draw
+
         # Top
         Gosu.draw_line(
           box.min.x, box.min.y, color,
